@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import find_transcript_dir  # noqa: E402
+from common import find_transcript_dir, utf8_stdio  # noqa: E402
 
 RUNNERS = {"git", "uv", "poetry", "pdm", "pipenv", "python", "python3", "py", "npx", "pip", "docker", "make"}
 SKIP = {"cd", "echo", "export", "set", "true", "false"}
@@ -89,6 +89,7 @@ def scan(tdir: Path):
 
 
 def main():
+    utf8_stdio()
     ap = argparse.ArgumentParser()
     ap.add_argument("--project", default=".")
     ap.add_argument("--dir")

@@ -27,6 +27,8 @@ from common import (  # noqa: E402
     load_json,
     plugin_version,
     read_settings,
+    utf8_stdio,
+    venv_python,
 )
 
 SKIP_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__", ".tox", ".mypy_cache", "dist", "build"}
@@ -43,7 +45,8 @@ DOCS_BY_DEP = {
 
 def git(root, *args):
     try:
-        out = subprocess.run(["git", *args], check=False, cwd=root, capture_output=True, text=True, timeout=20)
+        out = subprocess.run(["git", *args], check=False, cwd=root, capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=20)
     except (OSError, subprocess.TimeoutExpired):
         return None
     return out.stdout.strip() if out.returncode == 0 else None
@@ -107,6 +110,12 @@ def detect_tests(root: Path, deps: str):
         for line in read(root / doc).splitlines():
             if "pytest" in line and len(line) < 200:
                 mentions.append(f"{doc}: {line.strip()}")
+    # Sem runner (uv, poetry...), prefere o Python do venv do projeto: o hook de pre-commit roda
+    # no Git Bash, onde pytest e ruff instalados só no venv não estão no PATH.
+    vpy = None if runner else venv_python(root)
+    if vpy:
+        runner = f"{vpy} -m "
+        evidence.append(f"venv do projeto ({vpy})")
     test_cmd = f"{runner}pytest -q"
     lint_cmd = ""
     if "ruff" in deps or (root / "ruff.toml").is_file() or (root / ".ruff.toml").is_file():
@@ -252,6 +261,7 @@ def suggest_docs(deps: str):
 
 
 def main():
+    utf8_stdio()
     ap = argparse.ArgumentParser()
     ap.add_argument("--project", default=".")
     args = ap.parse_args()

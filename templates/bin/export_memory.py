@@ -15,7 +15,8 @@ def find_run_py():
     env = os.environ.get("CORTEXLITE_RUN")
     if env and Path(env).is_file():
         return Path(env)
-    roots = [Path.home() / ".claude" / "plugins"]
+    config = os.environ.get("CLAUDE_CONFIG_DIR") or str(Path.home() / ".claude")
+    roots = [Path(config) / "plugins"]
     found = []
     for root in roots:
         if not root.is_dir():
@@ -44,7 +45,8 @@ def main():
         print(result.stderr or "export falhou", file=sys.stderr)
         return result.returncode
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(result.stdout, encoding="utf-8")
+    with out.open("w", encoding="utf-8", newline="\n") as fh:
+        fh.write(result.stdout)
     print(f"memória exportada para {out}")
     return 0
 
