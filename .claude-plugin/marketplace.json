@@ -1,0 +1,14 @@
+{
+  "name": "minimal-squad",
+  "description": "Marketplace do plugin minimal-squad.",
+  "owner": {
+    "name": "kaueboni"
+  },
+  "plugins": [
+    {
+      "name": "minimal-squad",
+      "source": ".",
+      "description": "Instala no projeto uma squad SDD mínima com subagentes, comandos, skills e guardrails."
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+#!/bin/sh
+# Gerado pelo plugin minimal-squad. Guardrails determinísticos da squad.
+# Para desativar temporariamente: git commit --no-verify (evite).
+
+# 1. A spec de base é fixa.
+if git diff --cached --name-only | grep -qx "{{BASE_SPEC}}"; then
+  echo "minimal-squad: {{BASE_SPEC}} é fixo. Edite-o num commit separado com --no-verify, conscientemente." >&2
+  exit 1
+fi
+
+# 2. Possíveis segredos nas linhas adicionadas.
+PATTERNS=".githooks/secret-patterns.txt"
+if [ -f "$PATTERNS" ]; then
+  if git diff --cached -U0 -- . ":(exclude)$PATTERNS" | grep '^+' | grep -v '^+++' | grep -iEf "$PATTERNS" >/dev/null; then
+    echo "minimal-squad: possível segredo nas linhas adicionadas (padrões em $PATTERNS)." >&2
+    git diff --cached -U0 -- . ":(exclude)$PATTERNS" | grep '^+' | grep -v '^+++' | grep -inEf "$PATTERNS" | head -5 >&2
+    exit 1
+  fi
+fi
+
+{{#lint}}
+# 3. Lint.
+{{LINT_CMD}} || { echo "minimal-squad: lint falhou." >&2; exit 1; }
+
+{{/lint}}
+# 4. Testes (sem integração).
+{{TEST_SUITE_CMD}} || { echo "minimal-squad: testes falharam." >&2; exit 1; }
+
+exit 0

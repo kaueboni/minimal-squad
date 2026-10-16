@@ -1,0 +1,12 @@
+{
+  "name": "minimal-squad",
+  "displayName": "Minimal Squad",
+  "version": "0.1.0",
+  "description": "Instala no projeto uma squad SDD mínima: 6 subagentes (discovery, researcher, tech-lead, contract-tester, developer, auditor), comandos /spec, /build, /review, /test e /onboard, skills de engenharia e guardrails. Depois de instalada, a squad vive no repositório e não depende do plugin.",
+  "author": {
+    "name": "kaueboni"
+  },
+  "repository": "https://github.com/kaueboni/minimal-squad",
+  "license": "MIT",
+  "keywords": ["sdd", "spec-driven-development", "subagents", "squad", "python"]
+}

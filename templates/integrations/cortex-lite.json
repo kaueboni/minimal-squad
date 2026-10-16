@@ -1,0 +1,22 @@
+{
+  "_comment": "Mapeamento mantido pela squad. O cortex-lite publica as ferramentas e os perfis; a squad decide qual agente usa qual perfil. Se o cortex-lite mudar nomes de ferramentas, ajuste aqui.",
+  "plugin_names": ["cortex-lite"],
+  "tool_prefix": "mcp__plugin_cortex-lite_memoria__",
+  "skill": "cortex-lite:memoria",
+  "export_hint": "run.py export",
+  "profiles": {
+    "leitor": ["recall", "memory_get", "memory_list"],
+    "pesquisador": ["recall", "memory_get", "memory_list", "memory_save"],
+    "decisor": ["recall", "memory_get", "memory_list", "memory_save", "memory_supersede"],
+    "executor": ["recall", "memory_get", "memory_list", "memory_save"],
+    "revisor": ["recall", "memory_get", "memory_list", "memory_save", "memory_supersede"]
+  },
+  "agents": {
+    "discovery": "leitor",
+    "contract-tester": "leitor",
+    "researcher": "pesquisador",
+    "tech-lead": "decisor",
+    "developer": "executor",
+    "auditor": "revisor"
+  }
+}
