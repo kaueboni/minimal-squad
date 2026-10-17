@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import stat
 import subprocess
 import sys
@@ -40,12 +41,14 @@ from common import (  # noqa: E402
     WRITE_TOOLS,
     TemplateError,
     dump_json,
+    is_python_word,
     load_json,
     plugin_version,
     render,
     resolve_integrations,
     resolve_params,
     sha256_text,
+    utf8_stdio,
 )
 
 ALL_STEPS = ["skills", "agents", "commands", "settings", "layout", "githooks", "claude-md", "progress", "bin"]
@@ -240,10 +243,10 @@ class Installer:
             if not words:
                 return None
             if words[0] in ("uv", "poetry", "pdm", "pipenv") and len(words) >= 3 and words[1] == "run":
-                if words[2] in ("python", "python3", "py") and len(words) >= 5 and words[3] == "-m":
+                if is_python_word(words[2]) and len(words) >= 5 and words[3] == "-m":
                     return " ".join(words[:5])
                 return " ".join(words[:3])
-            if words[0] in ("python", "python3", "py") and len(words) >= 3 and words[1] == "-m":
+            if is_python_word(words[0]) and len(words) >= 3 and words[1] == "-m":
                 return " ".join(words[:3])
             return words[0]
 
@@ -290,7 +293,7 @@ class Installer:
         data = {}
         if existed:
             try:
-                data = json.loads(path.read_text(encoding="utf-8"))
+                data = json.loads(path.read_text(encoding="utf-8-sig"))
             except json.JSONDecodeError as exc:
                 self.report["errors"].append(f"{rel} não é JSON válido ({exc}); não alterei")
                 return
@@ -360,6 +363,10 @@ class Installer:
             return
         self.put(".githooks/pre-commit", self.tpl("githooks/pre-commit"), mode_exec=True)
         self.put(".githooks/secret-patterns.txt", (TEMPLATES / "githooks" / "secret-patterns.txt").read_text(encoding="utf-8"))
+        if os.name == "nt" and not self.check and (self.root / ".githooks" / "pre-commit").is_file():
+            # No Windows o chmod não existe: sem isto o índice guarda 100644 e o hook não roda em Linux/macOS.
+            if self._git("add", "--chmod=+x", ".githooks/pre-commit") is None:
+                self.report["warnings"].append("rode: git add --chmod=+x .githooks/pre-commit")
         if not self.check and hooks_path != ".githooks":
             if self._git("config", "core.hooksPath", ".githooks") is None:
                 self.report["warnings"].append("não consegui rodar git config core.hooksPath .githooks")
@@ -397,7 +404,8 @@ class Installer:
 
     def _git(self, *args):
         try:
-            out = subprocess.run(["git", *args], check=False, cwd=self.root, capture_output=True, text=True, timeout=20)
+            out = subprocess.run(["git", *args], check=False, cwd=self.root, capture_output=True, text=True,
+                                 encoding="utf-8", errors="replace", timeout=20)
         except (OSError, subprocess.TimeoutExpired):
             return None
         return out.stdout.strip() if out.returncode == 0 else None
@@ -409,6 +417,7 @@ class Installer:
 
 
 def main():
+    utf8_stdio()
     ap = argparse.ArgumentParser()
     ap.add_argument("--project", default=".")
     ap.add_argument("--steps", default="all")

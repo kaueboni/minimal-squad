@@ -15,7 +15,7 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import AGENTS, COMMANDS, TEMPLATES, render  # noqa: E402
+from common import AGENTS, COMMANDS, TEMPLATES, render, utf8_stdio  # noqa: E402
 
 FLAGS = ["cortex", "agentmeter", "ponytail", "rtk", "researcher", "lint", "refs"]
 VARS = {
@@ -33,6 +33,7 @@ def frontmatter(text: str) -> dict:
 
 
 def main():
+    utf8_stdio()
     failures = []
     files = [f"agents/{a}.md" for a in AGENTS] + [f"commands/{c}.md" for c in COMMANDS] + \
             ["project/CLAUDE.block.md", "project/PROGRESS.md", "githooks/pre-commit"]

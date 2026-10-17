@@ -1,7 +1,7 @@
 {
   "name": "minimal-squad",
   "displayName": "Minimal Squad",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Instala no projeto uma squad SDD mínima: 6 subagentes (discovery, researcher, tech-lead, contract-tester, developer, auditor), comandos /spec, /build, /review, /test e /onboard, skills de engenharia e guardrails. Depois de instalada, a squad vive no repositório e não depende do plugin.",
   "author": {
     "name": "kaueboni"

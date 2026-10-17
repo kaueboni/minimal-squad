@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -62,6 +63,29 @@ DEFAULT_PARAMS = {
 DEFAULT_INTEGRATIONS = {"cortex_lite": False, "agentmeter": False, "ponytail": False, "rtk": False}
 
 
+def utf8_stdio() -> None:
+    """No Windows o stdout em pipe usa cp1252 e o texto vira CRLF; o Claude Code lê UTF-8."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", newline="\n")
+        except (AttributeError, ValueError):
+            pass
+
+
+def venv_python(root: Path):
+    """Python do venv do projeto, em caminho relativo com barras (funciona no Git Bash), ou None."""
+    for rel in (".venv/Scripts/python.exe", ".venv/bin/python", "venv/Scripts/python.exe", "venv/bin/python"):
+        if (root / rel).is_file():
+            return rel[:-4] if rel.endswith(".exe") else rel
+    return None
+
+
+def is_python_word(word: str) -> bool:
+    """python, python3, py ou um caminho para eles (por exemplo .venv/Scripts/python)."""
+    name = word.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name in ("python", "python3", "py", "python.exe")
+
+
 def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -73,7 +97,7 @@ def sha256_file(path: Path) -> str:
 def load_json(path: Path, default=None):
     if not path.is_file():
         return default
-    with path.open(encoding="utf-8") as fh:
+    with path.open(encoding="utf-8-sig") as fh:
         return json.load(fh)
 
 

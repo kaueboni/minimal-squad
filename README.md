@@ -72,6 +72,8 @@ A ordem não é obrigatória: se instalar um parceiro depois, rode
 Requisitos: Claude Code com suporte a plugins, git, Python 3.9+ no PATH
 (`python3`, `python` ou `py`).
 
+**Windows:** instale o [Git for Windows](https://git-scm.com/download/win) (Git Bash). O Claude Code e o hook de pre-commit rodam nele. Se o projeto usa `.venv`, o `init` grava `test_cmd` e `lint_cmd` com o Python do venv (`.venv/Scripts/python -m pytest -q`), então não precisa ativar o ambiente para commitar.
+
 ### Instalar a squad num projeto
 
 Na raiz do projeto (repositório git, sem mudanças pendentes):
