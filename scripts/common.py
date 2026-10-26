@@ -14,6 +14,37 @@ CONFIG_REL = ".claude/minimal-squad.json"
 LOCK_REL = ".claude/minimal-squad.lock.json"
 PENDING_REL = ".claude/.minimal-squad-pending"
 
+# Alvos de instalação. "claude" grava em .claude/ (Claude Code); "copilot" grava
+# em .github/ (GitHub Copilot: VS Code, Copilot CLI e cloud agent).
+TARGETS = ("claude", "copilot")
+META_DIRS = {"claude": ".claude", "copilot": ".github"}
+CONFIG_NAME = "minimal-squad.json"
+LOCK_NAME = "minimal-squad.lock.json"
+PENDING_NAME = ".minimal-squad-pending"
+# Integrações que só existem como plugins do Claude Code.
+CLAUDE_ONLY_INTEGRATIONS = ("cortex_lite", "agentmeter", "ponytail", "rtk")
+
+# Ferramentas do Claude Code → aliases de custom agents do Copilot
+# (https://docs.github.com/en/copilot/reference/custom-agents-configuration).
+COPILOT_TOOL_ALIASES = {
+    "Read": "read", "NotebookRead": "read",
+    "Grep": "search", "Glob": "search",
+    "Edit": "edit", "Write": "edit", "MultiEdit": "edit", "NotebookEdit": "edit",
+    "Bash": "execute",
+    "WebSearch": "web", "WebFetch": "web",
+    "TodoWrite": "todo",
+}
+# Ferramentas dos prompt files (/spec, /build...). "agent" permite chamar subagentes.
+COPILOT_PROMPT_TOOLS = {
+    "spec": ["agent", "read", "search"],
+    "build": ["agent", "read", "search", "edit", "execute", "todo"],
+    "review": ["agent", "read", "search", "execute"],
+    "test": ["read", "search", "edit", "execute"],
+    "onboard": ["agent", "read", "search", "execute"],
+    "base-spec": ["read", "search", "edit", "execute"],
+}
+COPILOT_EXTRA_PROMPTS = ["base-spec"]
+
 AGENTS = ["discovery", "researcher", "tech-lead", "contract-tester", "developer", "auditor"]
 COMMANDS = ["spec", "build", "review", "test", "onboard"]
 SKILLS = [
@@ -59,6 +90,9 @@ DEFAULT_PARAMS = {
     "precommit": True,
     "autonomy_edits": True,
     "integration_refs": [],
+    # Só para o alvo copilot. Vazio = o agente usa o modelo selecionado no Copilot.
+    "copilot_model_read": "",
+    "copilot_model_work": "",
 }
 DEFAULT_INTEGRATIONS = {"cortex_lite": False, "agentmeter": False, "ponytail": False, "rtk": False}
 
@@ -123,10 +157,45 @@ def resolve_params(config: dict) -> dict:
     return params
 
 
-def resolve_integrations(config: dict) -> dict:
+def resolve_integrations(config: dict, target: str = "claude") -> dict:
     integ = dict(DEFAULT_INTEGRATIONS)
     integ.update(config.get("integrations", {}))
-    return {k: bool(v) for k, v in integ.items()}
+    integ = {k: bool(v) for k, v in integ.items()}
+    if target == "copilot":
+        integ.update({k: False for k in CLAUDE_ONLY_INTEGRATIONS})
+    return integ
+
+
+def find_config(root: Path):
+    """Procura a configuração em .claude/ e depois em .github/.
+
+    Retorna (pasta_meta_relativa, config) ou (None, None). A pasta onde a
+    configuração está é também a pasta do lock e dos arquivos pendentes.
+    """
+    for meta in (META_DIRS["claude"], META_DIRS["copilot"]):
+        data = load_json(root / meta / CONFIG_NAME, None)
+        if data is not None:
+            return meta, data
+    return None, None
+
+
+def copilot_tools(tools: list) -> list:
+    """Converte nomes de ferramentas do Claude Code para os aliases do Copilot, sem repetir.
+
+    MCP no formato do Claude (mcp__servidor__ferramenta) vira servidor/ferramenta.
+    """
+    out = []
+    for t in tools:
+        if t in COPILOT_TOOL_ALIASES:
+            name = COPILOT_TOOL_ALIASES[t]
+        elif t.startswith("mcp__") and t.count("__") >= 2:
+            _, server, tool = t.split("__", 2)
+            name = f"{server}/{tool}"
+        else:
+            name = t
+        if name not in out:
+            out.append(name)
+    return out
 
 
 # ---------------------------------------------------------------- templating

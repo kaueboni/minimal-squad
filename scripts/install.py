@@ -1,25 +1,36 @@
 """Instalador determinístico do minimal-squad.
 
-Lê .claude/minimal-squad.json do projeto, renderiza os templates do plugin e
+Lê minimal-squad.json do projeto (em .claude/ ou .github/), renderiza os templates do plugin e
 grava no projeto. Regras:
 - arquivo novo → grava;
 - arquivo igual ao renderizado → nada;
 - arquivo que o próprio minimal-squad gravou e ninguém mudou (hash no lock)
   → atualiza;
 - arquivo existente com conteúdo de outra origem ou editado à mão → NÃO
-  sobrescreve: grava a versão nova em .claude/.minimal-squad-pending/ e avisa.
+  sobrescreve: grava a versão nova em <pasta da config>/.minimal-squad-pending/ e avisa.
 Nunca faz commit, push ou qualquer operação de rede.
 
 Uso:
   python install.py --project . --steps all
   python install.py --project . --steps agents,commands --check   (só mostra)
+  python install.py --project . --init-config --target copilot    (grava a config sugerida)
+  python install.py --project . --steps all --target copilot
 Etapas: skills, agents, commands, settings, layout, githooks, claude-md, progress, bin
+("instructions" é sinônimo de "claude-md").
+
+Alvos (--target, ou "target" na configuração; padrão claude):
+- claude: .claude/agents, .claude/commands, .claude/skills, .claude/settings.json, CLAUDE.md
+- copilot: .github/agents/*.agent.md, .github/prompts/*.prompt.md, .github/skills,
+  .vscode/settings.json (auto-aprovação do terminal), .github/copilot-instructions.md
+A configuração, o lock e os pendentes ficam na pasta da configuração
+(.claude/ ou .github/).
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -30,17 +41,24 @@ from common import (  # noqa: E402
     AGENTS,
     BASE_SKILLS,
     BASE_TOOLS,
+    CLAUDE_ONLY_INTEGRATIONS,
     COMMANDS,
-    CONFIG_REL,
-    LOCK_REL,
+    CONFIG_NAME,
+    COPILOT_EXTRA_PROMPTS,
+    COPILOT_PROMPT_TOOLS,
+    LOCK_NAME,
     MAX_SKILLS,
-    PENDING_REL,
+    META_DIRS,
+    PENDING_NAME,
     SKILLS,
+    TARGETS,
     TEMPLATES,
     WRITE_ALLOWED,
     WRITE_TOOLS,
     TemplateError,
+    copilot_tools,
     dump_json,
+    find_config,
     is_python_word,
     load_json,
     plugin_version,
@@ -52,23 +70,35 @@ from common import (  # noqa: E402
 )
 
 ALL_STEPS = ["skills", "agents", "commands", "settings", "layout", "githooks", "claude-md", "progress", "bin"]
+STEP_ALIASES = {"instructions": "claude-md"}
 BLOCK_START = "<!-- minimal-squad:start"
 BLOCK_END = "<!-- minimal-squad:end -->"
+AGENT_MENTION = re.compile(r'@"([\w-]+) \(agent\)"')
+AGENT_MENTION_ITEM = re.compile(r'^([ \t]*(?:\w+\.|-)[ \t]+)@"([\w-]+) \(agent\)"', re.MULTILINE)
 
 
 class Installer:
-    def __init__(self, root: Path, config: dict, check: bool):
+    def __init__(self, root: Path, config: dict, check: bool, target: str = "claude", meta: str = None):
         self.root = root
         self.config = config
         self.check = check
+        self.target = target
+        self.copilot = target == "copilot"
+        self.meta = meta or META_DIRS[target]
+        self.pending_rel = f"{self.meta}/{PENDING_NAME}"
         self.params = resolve_params(config)
-        self.integ = resolve_integrations(config)
-        self.lock_path = root / LOCK_REL
+        self.integ = resolve_integrations(config, target)
+        self.lock_path = root / self.meta / LOCK_NAME
         lock = load_json(self.lock_path, {}) or {}
         self.lock = lock.get("files", {})
         self.report = {"created": [], "updated": [], "unchanged": [], "pending": [],
                        "skipped": [], "warnings": [], "errors": []}
         self.cortex = load_json(TEMPLATES / "integrations" / "cortex-lite.json", {})
+        if self.copilot:
+            ignored = [k for k in CLAUDE_ONLY_INTEGRATIONS if (config.get("integrations") or {}).get(k)]
+            if ignored:
+                self.report["warnings"].append(
+                    f"alvo copilot: integrações do Claude Code ignoradas: {ignored}")
 
     def validate(self):
         """Valida configuração e overrides antes de gravar qualquer coisa."""
@@ -102,7 +132,7 @@ class Installer:
         return {
             "cortex": i["cortex_lite"], "agentmeter": i["agentmeter"], "ponytail": i["ponytail"],
             "rtk": i["rtk"], "researcher": bool(p["researcher"]), "lint": bool(p["lint_cmd"].strip()),
-            "refs": bool(p.get("integration_refs")),
+            "refs": bool(p.get("integration_refs")), "copilot": self.copilot,
         }
 
     def variables(self, extra=None):
@@ -115,6 +145,7 @@ class Installer:
             "INTEGRATION_REFS": ", ".join(p.get("integration_refs") or []),
             "PYTHON": p["python"], "NEXT_SPEC": self.config.get("next_spec", "NNN"),
             "PLUGIN_VERSION": plugin_version(),
+            "INSTRUCTIONS_FILE": ".github/copilot-instructions.md" if self.copilot else "CLAUDE.md",
         }
         if extra:
             v.update(extra)
@@ -140,7 +171,7 @@ class Installer:
                 self.lock[rel] = new_hash
                 self.report["updated"].append(rel)
                 return "updated"
-            pending = self.root / PENDING_REL / rel
+            pending = self.root / self.pending_rel / rel
             self._write(pending, content, mode_exec)
             self.report["pending"].append({"file": rel, "new_version": self.rel(pending)})
             return "pending"
@@ -178,17 +209,22 @@ class Installer:
         return render(text, self.variables(extra), self.flags)
 
     # ------------------------------------------------------------ steps
+    @property
+    def base(self) -> str:
+        """Pasta onde agentes, comandos, skills e referências são gravados."""
+        return META_DIRS[self.target]
+
     def step_skills(self):
         for skill in SKILLS:
             src_dir = TEMPLATES / "skills" / skill
             for src in sorted(src_dir.rglob("*")):
                 if src.is_file():
-                    rel = ".claude/skills/" + str(src.relative_to(TEMPLATES / "skills")).replace("\\", "/")
+                    rel = f"{self.base}/skills/" + str(src.relative_to(TEMPLATES / "skills")).replace("\\", "/")
                     self.put(rel, src.read_text(encoding="utf-8"))
-        self.put(".claude/skills/LICENSE-addyosmani-agent-skills",
+        self.put(f"{self.base}/skills/LICENSE-addyosmani-agent-skills",
                  (TEMPLATES / "skills" / "LICENSE-addyosmani-agent-skills").read_text(encoding="utf-8"))
         for ref in sorted((TEMPLATES / "references").glob("*.md")):
-            self.put(f".claude/references/{ref.name}", ref.read_text(encoding="utf-8"))
+            self.put(f"{self.base}/references/{ref.name}", ref.read_text(encoding="utf-8"))
 
     def agent_tools_skills(self, agent):
         tools = list(BASE_TOOLS[agent])
@@ -220,7 +256,7 @@ class Installer:
 
     def step_agents(self):
         for agent in AGENTS:
-            rel = f".claude/agents/{agent}.md"
+            rel = f".github/agents/{agent}.agent.md" if self.copilot else f".claude/agents/{agent}.md"
             if agent == "researcher" and not self.params["researcher"]:
                 self.remove_if_managed(rel, "researcher desligado")
                 continue
@@ -229,11 +265,68 @@ class Installer:
                 "TOOLS": ", ".join(tools),
                 "SKILLS": "\n".join(f"  - {s}" for s in skills),
             })
+            if self.copilot:
+                content = self.copilot_agent(agent, content, tools, skills)
             self.put(rel, content)
 
     def step_commands(self):
+        if not self.copilot:
+            for cmd in COMMANDS:
+                self.put(f".claude/commands/{cmd}.md", self.tpl(f"commands/{cmd}.md"))
+            return
         for cmd in COMMANDS:
-            self.put(f".claude/commands/{cmd}.md", self.tpl(f"commands/{cmd}.md"))
+            self.put(f".github/prompts/{cmd}.prompt.md", self.copilot_prompt(cmd, self.tpl(f"commands/{cmd}.md")))
+        for name in COPILOT_EXTRA_PROMPTS:
+            text = self.tpl(f"copilot/prompts/{name}.prompt.md")
+            self.put(f".github/prompts/{name}.prompt.md", self.copilot_prompt(name, text))
+
+    # ------------------------------------------------------------ copilot
+    @staticmethod
+    def split_frontmatter(text: str):
+        if not text.startswith("---\n"):
+            raise TemplateError("template sem cabeçalho YAML")
+        _, head, body = text.split("---\n", 2)
+        return head, body
+
+    @staticmethod
+    def header_line(head: str, key: str):
+        for line in head.splitlines():
+            if line.startswith(key + ":"):
+                return line
+        return None
+
+    @staticmethod
+    def copilot_body(body: str) -> str:
+        """Adapta o texto escrito para o Claude Code ao Copilot."""
+        body = body.replace("chamando cada agente com @", "chamando cada agente como subagente")
+        body = AGENT_MENTION_ITEM.sub(lambda m: f"{m.group(1)}Chame o subagente `{m.group(2)}`", body)
+        body = AGENT_MENTION.sub(lambda m: f"o subagente `{m.group(1)}`", body)
+        body = body.replace("$ARGUMENTS", "(texto digitado depois do comando)")
+        body = body.replace("nem via Bash", "nem pelo terminal")
+        return body
+
+    def copilot_agent(self, agent: str, rendered: str, tools: list, skills: list) -> str:
+        head, body = self.split_frontmatter(rendered)
+        model = self.params["copilot_model_read"] if agent in ("discovery", "researcher") \
+            else self.params["copilot_model_work"]
+        lines = ["---", f"name: {agent}", self.header_line(head, "description"),
+                 "tools: [" + ", ".join(f"'{t}'" for t in copilot_tools(tools)) + "]"]
+        if str(model).strip():
+            lines.append(f"model: '{str(model).strip()}'")
+        lines.append("---")
+        skill_paths = ", ".join(f"`.github/skills/{s}/SKILL.md`" for s in skills if ":" not in s)
+        intro = (f"Antes de começar, leia e siga as skills: {skill_paths}.\n\n" if skill_paths else "")
+        return "\n".join(lines) + "\n" + intro + self.copilot_body(body).lstrip("\n")
+
+    def copilot_prompt(self, name: str, rendered: str) -> str:
+        head, body = self.split_frontmatter(rendered)
+        lines = ["---", self.header_line(head, "description")]
+        hint = self.header_line(head, "argument-hint")
+        if hint:
+            lines.append(hint)
+        lines += ["agent: 'agent'",
+                  "tools: [" + ", ".join(f"'{t}'" for t in COPILOT_PROMPT_TOOLS[name]) + "]", "---"]
+        return "\n".join(lines) + "\n" + self.copilot_body(body).lstrip("\n")
 
     def permissions(self):
         p, i = self.params, self.integ
@@ -286,7 +379,53 @@ class Installer:
         deny += ov.get("deny", [])
         return allow, deny
 
+    def copilot_auto_approve(self):
+        """Regras de chat.tools.terminal.autoApprove (VS Code). true libera; false sempre pede aprovação."""
+        allow, deny = self.permissions()
+        rules = {}
+        for item in allow:
+            m = re.fullmatch(r"Bash\((.+?)(?::\*)?\)", item)
+            if m:
+                rules[m.group(1)] = True
+        for item in deny:
+            m = re.fullmatch(r"Bash\((.+?)(?::\*)?\)", item)
+            if m:
+                rules[m.group(1)] = False
+        return rules
+
+    def step_settings_copilot(self):
+        rel = ".vscode/settings.json"
+        path = self.root / rel
+        existed = path.is_file()
+        data = {}
+        if existed:
+            try:
+                data = json.loads(path.read_text(encoding="utf-8-sig"))
+            except json.JSONDecodeError as exc:
+                self.report["warnings"].append(
+                    f"{rel} não é JSON puro ({exc}; comentários?); não alterei. "
+                    f"Acrescente à mão em chat.tools.terminal.autoApprove: {self.copilot_auto_approve()}")
+                return
+        cur = data.setdefault("chat.tools.terminal.autoApprove", {})
+        added = 0
+        for cmd, ok in self.copilot_auto_approve().items():
+            if cmd in cur:
+                continue
+            cur[cmd] = ok
+            added += 1
+        if not added:
+            self.report["unchanged"].append(rel)
+            return
+        self._write(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+        self.report["updated" if existed else "created"].append(f"{rel} (+{added} regras)")
+        self.report["warnings"].append(
+            "Copilot: a auto-aprovação do terminal é conveniência, não barreira de segurança; "
+            "os guardrails determinísticos são o pre-commit e a revisão do PR")
+
     def step_settings(self):
+        if self.copilot:
+            self.step_settings_copilot()
+            return
         rel = ".claude/settings.json"
         path = self.root / rel
         existed = path.is_file()
@@ -341,7 +480,7 @@ class Installer:
                     self.put(f"{d}/__init__.py", "", managed=False)
         gi = self.root / ".gitignore"
         lines = gi.read_text(encoding="utf-8").splitlines() if gi.is_file() else []
-        wanted = [f"{PENDING_REL}/"] + list(self.config.get("gitignore_extra", []))
+        wanted = [f"{self.pending_rel}/"] + list(self.config.get("gitignore_extra", []))
         missing = [w for w in wanted if w not in lines]
         if missing:
             text = "\n".join(lines + ["", "# minimal-squad"] + missing) + "\n"
@@ -374,7 +513,8 @@ class Installer:
                 self.report["updated"].append("git config core.hooksPath = .githooks (local desta máquina)")
 
     def step_claude_md(self):
-        path = self.root / "CLAUDE.md"
+        name = ".github/copilot-instructions.md" if self.copilot else "CLAUDE.md"
+        path = self.root / name
         block = self.tpl("project/CLAUDE.block.md").rstrip("\n")
         text = path.read_text(encoding="utf-8") if path.is_file() else ""
         if BLOCK_START in text and BLOCK_END in text:
@@ -384,10 +524,10 @@ class Installer:
         else:
             new = (text.rstrip("\n") + "\n\n" if text.strip() else "") + block + "\n"
         if new == text:
-            self.report["unchanged"].append("CLAUDE.md")
+            self.report["unchanged"].append(name)
             return
         self._write(path, new)
-        self.report["updated" if text else "created"].append("CLAUDE.md (bloco minimal-squad)")
+        self.report["updated" if text else "created"].append(f"{name} (bloco minimal-squad)")
 
     def step_progress(self):
         if (self.root / "PROGRESS.md").is_file():
@@ -397,6 +537,9 @@ class Installer:
 
     def step_bin(self):
         rel = ".claude/minimal-squad/bin/export_memory.py"
+        if self.copilot:
+            self.report["skipped"].append("bin (só existe com o cortex-lite, no Claude Code)")
+            return
         if not self.integ["cortex_lite"]:
             self.report["skipped"].append(f"{rel} (cortex-lite não habilitado)")
             return
@@ -413,7 +556,37 @@ class Installer:
     def save_lock(self):
         if self.check:
             return
-        dump_json(self.lock_path, {"plugin_version": plugin_version(), "files": dict(sorted(self.lock.items()))})
+        dump_json(self.lock_path, {"plugin_version": plugin_version(), "target": self.target,
+                                   "files": dict(sorted(self.lock.items()))})
+
+
+def init_config(root: Path, target: str, check: bool):
+    """Grava a configuração sugerida pelo detect, para quem instala sem o Claude Code."""
+    from detect import build_report  # noqa: E402  (import tardio: detect muda o cwd)
+
+    meta, existing = find_config(root)
+    if existing is not None:
+        return {"errors": [f"{meta}/{CONFIG_NAME} já existe; edite-o ou apague antes de gerar outro"]}
+    report = build_report(root, target)
+    if not report["git"]["is_repo"]:
+        return {"errors": ["o projeto não é um repositório git; a squad precisa de git"]}
+    config = report["suggested_config"]
+    config["target"] = target
+    config["next_spec"] = report["specs"]["next_number"]
+    rel = f"{META_DIRS[target]}/{CONFIG_NAME}"
+    if not check:
+        dump_json(root / rel, config)
+    warnings = []
+    if report["git"]["clean"] is False:
+        warnings.append("há mudanças não commitadas; commite ou guarde antes de instalar")
+    if report["hooks"]["conflict"]:
+        warnings.append("o projeto já usa outro mecanismo de hook; o pre-commit da squad não será instalado")
+    if not report["pytest_config"].get("has_integration_marker"):
+        warnings.append("falta o marcador integration do pytest; o prompt /base-spec acrescenta")
+    return {"created" if not check else "would_create": rel, "config": config,
+            "evidence": {"tests": report["tests"], "specs": report["specs"], "hooks": report["hooks"]},
+            "warnings": warnings,
+            "next": f"revise {rel} e rode: install.py --project . --steps all"}
 
 
 def main():
@@ -421,19 +594,33 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--project", default=".")
     ap.add_argument("--steps", default="all")
+    ap.add_argument("--target", choices=TARGETS, help="padrão: o da configuração, senão claude")
+    ap.add_argument("--init-config", action="store_true",
+                    help="grava a configuração sugerida pelo detect e sai (instalação sem o Claude Code)")
     ap.add_argument("--check", action="store_true", help="não grava; só mostra o que faria")
     args = ap.parse_args()
     root = Path(args.project).resolve()
-    config = load_json(root / CONFIG_REL, None)
+    if args.init_config:
+        out = init_config(root, args.target or "claude", args.check)
+        print(json.dumps(out, indent=2, ensure_ascii=False))
+        sys.exit(2 if out.get("errors") else 0)
+    meta, config = find_config(root)
     if config is None:
-        print(json.dumps({"errors": [f"{CONFIG_REL} não encontrado; rode /minimal-squad:init"]}, ensure_ascii=False))
+        print(json.dumps({"errors": [
+            f"{CONFIG_NAME} não encontrado em .claude/ nem em .github/; rode /minimal-squad:init "
+            f"(Claude Code) ou install.py --init-config --target copilot"]}, ensure_ascii=False))
         sys.exit(2)
-    steps = ALL_STEPS if args.steps == "all" else [s.strip() for s in args.steps.split(",") if s.strip()]
+    target = args.target or config.get("target", "claude")
+    if target not in TARGETS:
+        print(json.dumps({"errors": [f"target desconhecido: {target} (use {list(TARGETS)})"]}, ensure_ascii=False))
+        sys.exit(2)
+    raw = ALL_STEPS if args.steps == "all" else [s.strip() for s in args.steps.split(",") if s.strip()]
+    steps = [STEP_ALIASES.get(s, s) for s in raw]
     unknown = [s for s in steps if s not in ALL_STEPS]
     if unknown:
         print(json.dumps({"errors": [f"etapas desconhecidas: {unknown}"]}, ensure_ascii=False))
         sys.exit(2)
-    inst = Installer(root, config, args.check)
+    inst = Installer(root, config, args.check, target, meta)
     problems = inst.validate()
     if problems:
         print(json.dumps({"errors": problems, "note": "nada foi gravado"}, indent=2, ensure_ascii=False))
@@ -444,6 +631,7 @@ def main():
     except TemplateError as exc:
         inst.report["errors"].append(f"template: {exc}")
     inst.save_lock()
+    inst.report["target"] = target
     inst.report["steps"] = steps
     inst.report["check"] = args.check
     print(json.dumps(inst.report, indent=2, ensure_ascii=False))

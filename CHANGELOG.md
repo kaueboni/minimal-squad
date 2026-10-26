@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.0] - 2026-10-26
+
+### Added
+- Alvo **GitHub Copilot** (`--target copilot`): agentes em `.github/agents/*.agent.md`, prompts em
+  `.github/prompts/*.prompt.md` (`/spec`, `/build`, `/review`, `/test`, `/onboard` e o novo `/base-spec`),
+  skills e referências em `.github/`, bloco em `.github/copilot-instructions.md` e regras de
+  `chat.tools.terminal.autoApprove` em `.vscode/settings.json`. Ferramentas convertidas para os aliases do
+  Copilot; menções `@"x (agent)"` viram chamadas de subagente.
+- `install.py --init-config [--target copilot]`: grava a configuração sugerida pelo detect, para instalar
+  sem o Claude Code.
+- `detect.py --target copilot`: relata conflitos em `.github/agents`, `.github/prompts` e
+  `.github/copilot-instructions.md`.
+- Parâmetros `copilot_model_read` e `copilot_model_work` (vazios = modelo escolhido no Copilot).
+- `tests/test_copilot.py`; `check_templates.py` também valida a conversão para o Copilot.
+
+### Changed
+- A configuração é procurada em `.claude/` e depois em `.github/`; lock e pendentes ficam na mesma pasta.
+- O lock registra o alvo (`target`). A etapa `claude-md` aceita o sinônimo `instructions`.
+
 ## [0.1.1] - 2026-10-16
 
 ### Fixed

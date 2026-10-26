@@ -44,7 +44,12 @@
 {{#agentmeter}}
 - Instalar o plugin agentmeter e rodar `/agentmeter:setup`.
 {{/agentmeter}}
+{{^copilot}}
 - Abrir o Claude Code e rodar `/onboard`.
+{{/copilot}}
+{{#copilot}}
+- Abrir o Copilot Chat (VS Code) e rodar `/onboard`.
+{{/copilot}}
 
 ## Como trabalhar
-`/spec <feature>` → aprovar a spec → `/clear` → `/build auto NNN` → aprovar o plano → `/review` → testes de integração → push/deploy.
+`/spec <feature>` → aprovar a spec → {{^copilot}}`/clear`{{/copilot}}{{#copilot}}nova conversa{{/copilot}} → `/build auto NNN` → aprovar o plano → `/review` → testes de integração → push/deploy.

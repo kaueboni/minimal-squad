@@ -1,6 +1,6 @@
 """Detecta parâmetros e integrações para o minimal-squad. Só lê; não altera nada.
 
-Uso: python detect.py [--project .]
+Uso: python detect.py [--project .] [--target claude|copilot]
 Imprime um JSON com o que encontrou, as evidências e uma sugestão de configuração.
 """
 from __future__ import annotations
@@ -19,12 +19,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (  # noqa: E402
     AGENTS,
     COMMANDS,
-    CONFIG_REL,
+    CLAUDE_ONLY_INTEGRATIONS,
     DEFAULT_PARAMS,
-    LOCK_REL,
+    LOCK_NAME,
+    TARGETS,
     env_home_settings,
+    find_config,
     find_transcript_dir,
-    load_json,
     plugin_version,
     read_settings,
     utf8_stdio,
@@ -192,6 +193,23 @@ def detect_claude_dir(root: Path):
     }
 
 
+def detect_copilot_dir(root: Path):
+    gh = root / ".github"
+    agents = sorted(p.name.split(".")[0] for p in (gh / "agents").glob("*.md")) if (gh / "agents").is_dir() else []
+    prompts = sorted(p.name.split(".")[0] for p in (gh / "prompts").glob("*.prompt.md")) \
+        if (gh / "prompts").is_dir() else []
+    skills = sorted(p.parent.name for p in (gh / "skills").glob("*/SKILL.md")) if (gh / "skills").is_dir() else []
+    instr = gh / "copilot-instructions.md"
+    return {
+        "agents": agents, "prompts": prompts, "skills": skills,
+        "conflicting_agents": [a for a in agents if a in AGENTS],
+        "conflicting_prompts": [c for c in prompts if c in COMMANDS or c == "base-spec"],
+        "instructions_exists": instr.is_file(),
+        "managed_block": "minimal-squad:start" in read(instr),
+        "agents_md_exists": (root / "AGENTS.md").is_file(),
+    }
+
+
 def detect_hooks(root: Path):
     hooks_path = git(root, "config", "--get", "core.hooksPath")
     git_dir = git(root, "rev-parse", "--git-dir")
@@ -260,12 +278,7 @@ def suggest_docs(deps: str):
     return docs
 
 
-def main():
-    utf8_stdio()
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--project", default=".")
-    args = ap.parse_args()
-    root = Path(args.project).resolve()
+def build_report(root: Path, target: str = "claude") -> dict:
     os.chdir(root)
 
     inside = git(root, "rev-parse", "--is-inside-work-tree") == "true"
@@ -274,7 +287,7 @@ def main():
     tests = detect_tests(root, deps)
     specs = detect_specs(root)
     integrations = detect_integrations()
-    previous = load_json(root / CONFIG_REL, None)
+    meta, previous = find_config(root)
 
     specs_dir = "specs"
     if specs["feature_spec_dirs"]:
@@ -298,6 +311,10 @@ def main():
     if previous:
         suggested = {**suggested, **{k: previous[k] for k in ("params", "overrides") if k in previous}}
         suggested["integrations"] = {k: v["likely"] for k, v in integrations.items()}
+    if target == "copilot":
+        # cortex-lite, agentmeter, Ponytail e rtk são plugins/ganchos do Claude Code.
+        suggested["integrations"] = {k: False for k in suggested["integrations"]}
+        suggested["target"] = "copilot"
 
     report = {
         "plugin_version": plugin_version(),
@@ -316,9 +333,24 @@ def main():
         "claude_md": {"exists": (root / "CLAUDE.md").is_file(),
                       "managed_block": "minimal-squad:start" in read(root / "CLAUDE.md")},
         "progress_md": (root / "PROGRESS.md").is_file(),
-        "previous_install": {"config": previous is not None, "lock": (root / LOCK_REL).is_file()},
+        "previous_install": {"config": previous is not None, "meta_dir": meta,
+                             "lock": bool(meta) and (root / meta / LOCK_NAME).is_file()},
+        "target": target,
         "suggested_config": suggested,
     }
+    if target == "copilot":
+        report["copilot_dir"] = detect_copilot_dir(root)
+        report["ignored_integrations"] = [k for k in CLAUDE_ONLY_INTEGRATIONS if integrations[k]["likely"]]
+    return report
+
+
+def main():
+    utf8_stdio()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--project", default=".")
+    ap.add_argument("--target", choices=TARGETS, default="claude")
+    args = ap.parse_args()
+    report = build_report(Path(args.project).resolve(), args.target)
     json.dump(report, sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")
 
