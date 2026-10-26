@@ -634,7 +634,14 @@ def main():
     inst.report["target"] = target
     inst.report["steps"] = steps
     inst.report["check"] = args.check
-    print(json.dumps(inst.report, indent=2, ensure_ascii=False))
+    report = inst.report
+    if args.check:
+        # Em simulação nada é gravado: o relatório diz isso no topo e não usa "created"/"updated".
+        renamed = {"created": "would_create", "updated": "would_update", "pending": "would_pending",
+                   "removed": "would_remove"}
+        report = {"SIMULACAO": "--check: nada foi gravado. Rode sem --check para instalar."}
+        report.update({renamed.get(k, k): v for k, v in inst.report.items()})
+    print(json.dumps(report, indent=2, ensure_ascii=False))
     sys.exit(1 if inst.report["errors"] else 0)
 
 

@@ -149,6 +149,16 @@ class Copilot(unittest.TestCase):
         self.assertTrue((self.proj / "CLAUDE.md").is_file())
         self.assertFalse((self.proj / ".github").exists())
 
+    def test_check_nao_grava_e_avisa(self):
+        code, out = run_install(self.proj, "--init-config", "--target", "copilot")
+        self.assertEqual(code, 0, out)
+        code, out = run_install(self.proj, "--steps", "all", "--check")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(next(iter(out)), "SIMULACAO")
+        self.assertNotIn("created", out)
+        self.assertIn(".github/agents/developer.agent.md", out["would_create"])
+        self.assertFalse((self.proj / ".github" / "agents").exists())
+
     def test_init_config_nao_sobrescreve(self):
         self.install_copilot()
         code, out = run_install(self.proj, "--init-config", "--target", "copilot")
