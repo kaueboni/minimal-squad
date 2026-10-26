@@ -93,6 +93,60 @@ e lista no relatório para você decidir.
 
 Depois: reinicie o Claude Code.
 
+## GitHub Copilot
+
+A mesma squad também pode ser instalada para o **GitHub Copilot** (VS Code,
+Copilot CLI e cloud agent). Não precisa do Claude Code: o instalador roda
+direto com Python.
+
+```
+git clone https://github.com/kaueboni/minimal-squad ~/minimal-squad
+cd <seu projeto>                       # repositório git, sem mudanças pendentes
+git checkout -b chore/minimal-squad
+python ~/minimal-squad/scripts/install.py --project . --init-config --target copilot
+# revise .github/minimal-squad.json (test_cmd, lint_cmd, specs_dir, base_spec...)
+python ~/minimal-squad/scripts/install.py --project . --steps all
+```
+
+O que muda em relação ao Claude Code:
+
+| Claude Code | GitHub Copilot |
+|---|---|
+| `.claude/agents/<agente>.md` | `.github/agents/<agente>.agent.md` |
+| `.claude/commands/<cmd>.md` | `.github/prompts/<cmd>.prompt.md` (mesmos `/spec`, `/build`, `/review`, `/test`, `/onboard`) |
+| `.claude/skills/`, `.claude/references/` | `.github/skills/`, `.github/references/` |
+| `CLAUDE.md` (bloco) | `.github/copilot-instructions.md` (bloco) |
+| `.claude/settings.json` (allow/deny) | `.vscode/settings.json` → `chat.tools.terminal.autoApprove` |
+| `.claude/minimal-squad.json`, lock, pendentes | `.github/minimal-squad.json`, lock, pendentes |
+| `/minimal-squad:init` escreve a spec de base | prompt `/base-spec` (rode uma vez depois de instalar) |
+
+- **Agentes**: ferramentas convertidas para os aliases do Copilot
+  (`read`, `search`, `edit`, `execute`, `web`). As skills de cada agente
+  viram uma instrução no início do arquivo ("leia e siga
+  `.github/skills/.../SKILL.md`"). `maxTurns` e `effort` não existem no
+  Copilot e são omitidos.
+- **Modelos**: por padrão o agente usa o modelo escolhido no Copilot. Para
+  fixar, preencha `copilot_model_read` (discovery, researcher) e
+  `copilot_model_work` (os demais) em `.github/minimal-squad.json`.
+- **Orquestração**: os prompts rodam no modo agente com a ferramenta
+  `agent`, e chamam cada papel como subagente (cada chamada recebe todo o
+  contexto de que precisa). O researcher usa `web`, que não existe no
+  cloud agent.
+- **Integrações**: cortex-lite, agentmeter, Ponytail e rtk são do Claude
+  Code e ficam desligados no alvo copilot.
+- **Guardrails**: o pre-commit é o mesmo. A auto-aprovação do terminal no
+  VS Code é conveniência, não barreira: `false` só obriga a pedir
+  aprovação. Se o `.vscode/settings.json` tiver comentários, o instalador
+  não mexe e mostra as regras para você colar.
+- **Spec de base**: o pre-commit bloqueia commits que alteram a spec de
+  base; o primeiro commit dela (depois do `/base-spec`) é seu, com
+  `--no-verify`.
+
+Atualizar depois de um `git pull` no minimal-squad:
+`python ~/minimal-squad/scripts/install.py --project . --steps all --check`
+para ver o que muda, e sem `--check` para aplicar. Arquivos que você editou
+vão para `.github/.minimal-squad-pending/`.
+
 ## Integrações (opcionais e desacopladas)
 
 O minimal-squad é o único que conhece os outros plugins. Eles não sabem da
@@ -124,6 +178,7 @@ Os scripts também rodam direto, sem o Claude:
 python scripts/detect.py --project <projeto>          # só lê
 python scripts/inventory.py --project <projeto>       # uso real do Claude Code no projeto
 python scripts/install.py --project <projeto> --steps all --check
+python scripts/install.py --project <projeto> --init-config --target copilot   # ver "GitHub Copilot"
 ```
 
 ## Segurança

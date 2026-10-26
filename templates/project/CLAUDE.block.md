@@ -5,6 +5,9 @@
 - Specs de feature: `{{SPECS_DIR}}/NNN-SPEC-<feature>.md`. Plano e tarefas: `tasks/plan.md`, `tasks/todo.md`.
 - Estado do projeto, histórico e setup: `PROGRESS.md`.{{#cortex}} Decisões e lições: memória do cortex-lite (export em `docs/MEMORIA.md`).{{/cortex}}
 - Testes: `{{TEST_SUITE_CMD}}`. Integração (só humanos): `{{TEST_INTEGRATION_CMD}}`.
+{{#copilot}}
+- Squad: agentes em `.github/agents/`, prompts (`/spec`, `/build`...) em `.github/prompts/`, skills em `.github/skills/`.
+{{/copilot}}
 - As convenções deste projeto prevalecem sobre os padrões das skills.
 - Nunca: push, deploy, ler `.env`, dados reais em fixtures, testes ou commits.
 <!-- minimal-squad:end -->

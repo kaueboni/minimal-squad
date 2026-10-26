@@ -4,7 +4,7 @@ description: 'Situa um dev novo no projeto — o que é, estado atual, como roda
 
 1. Rode `git log --oneline -20` e guarde o resultado.
 2. Chame @"discovery (agent)" em modo onboarding, passando o git log, e
-   peça: o que o app faz (CLAUDE.md, {{BASE_SPEC}}); estado e histórico
+   peça: o que o app faz ({{INSTRUCTIONS_FILE}}, {{BASE_SPEC}}); estado e histórico
    (PROGRESS.md, últimas specs em {{SPECS_DIR}}/, tasks/todo.md); mapa do
    código e das integrações externas lidas e escritas.
 3. Mostre ao usuário:
